@@ -7,7 +7,7 @@ metadata:
   maintainer: 1842010692
   upstream: https://github.com/zpboom324-star/zpboom-3d-previs
   upstreamVersion: "2.7.5"
-  version: "2.9.0"
+  version: "2.9.1"
   language: zh-CN
 ---
 
@@ -136,6 +136,8 @@ python3 scripts/validate_scene.py "./my-previs/scene.json"
 - 生成端也要主动避障：机位放在台阶 / 洞壁之类实体的另一侧时，主体会被完全挡住。让生成脚本对每镜取首 / 中 / 尾三个时刻，对「相机 → 每个角色头与胸」做联合检测，命中就按「抬升优先 → 横移 → 拉近 → 组合」的顺序试候选位。检测口径必须与引擎一致（引擎用 `smoothSample` 采样，检测点取头与胸，不是只测视点目标）。
 
 生成后复跑：逐镜遮挡体检 + 近景压脸体检 + 全片气泡扫描，三项都归零、控制台无错误，才算这版预演可用。
+
+装好或换机器后，先跑 `python3 scripts/selftest.py`（8 项门禁，全过才是可用安装；`--json` 给 agent 解析）。它只写系统临时目录，不碰工程、不联网。
 
 ## 4. 录制与整理生成参考
 

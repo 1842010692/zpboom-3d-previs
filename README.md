@@ -68,28 +68,39 @@
 
 ## 安装
 
-### Claude Code
+装好之后，**任何支持 Agent Skills 的助手都能调用它**——你用中文说一句「用 zpboom-3d-previs 把这些分镜做成 3D 预演」，助手会自己读 `SKILL.md`，按里面的流程问该问的问题、建工程、改配置、开网页逐镜检查。
 
-把整个 `zpboom-3d-previs` 文件夹放进技能目录，确保最终路径是：
-
-```text
-~/.claude/skills/zpboom-3d-previs/SKILL.md
-```
-
-两种方式任选：
+### WorkBuddy
 
 ```bash
-# 方式 1：从 GitHub 克隆
-git clone https://github.com/zpboom324-star/zpboom-3d-previs.git /tmp/zpboom-3d-previs-repo
-cp -R /tmp/zpboom-3d-previs-repo/zpboom-3d-previs ~/.claude/skills/
+git clone https://github.com/1842010692/zpboom-3d-previs.git /tmp/zpboom-repo
+mkdir -p ~/.workbuddy/skills
+cp -R /tmp/zpboom-repo/zpboom-3d-previs ~/.workbuddy/skills/
 ```
 
-```text
-方式 2：在 https://github.com/zpboom324-star/zpboom-3d-previs 点 Code → Download ZIP，
-把解压出来的 zpboom-3d-previs 文件夹放进 ~/.claude/skills/
+装好后的路径应是 `~/.workbuddy/skills/zpboom-3d-previs/SKILL.md`。重开一个会话，技能列表里应能看到 `zpboom-3d-previs`。
+
+### Claude Code
+
+```bash
+git clone https://github.com/1842010692/zpboom-3d-previs.git /tmp/zpboom-repo
+mkdir -p ~/.claude/skills
+cp -R /tmp/zpboom-repo/zpboom-3d-previs ~/.claude/skills/
 ```
 
-Windows 的技能目录是 `%USERPROFILE%\.claude\skills\`。装好后重开一个会话，技能列表里应能看到 `zpboom-3d-previs`。
+Windows 的技能目录是 `%USERPROFILE%\.claude\skills\`。也可以打开 https://github.com/1842010692/zpboom-3d-previs 点 Code → Download ZIP，把解压出来的 `zpboom-3d-previs` 文件夹整个放进去。
+
+> **装哪一份**：本仓库是 [zpboom324-star/zpboom-3d-previs](https://github.com/zpboom324-star/zpboom-3d-previs) v2.7.5 的增强版，多出台词气泡、跨平台调试工作台、遮挡穿模体检和单文件打包。从上游装会拿到没有这些功能的旧版。
+
+### 装完先自检
+
+```bash
+python3 ~/.workbuddy/skills/zpboom-3d-previs/scripts/selftest.py
+```
+
+8 项门禁：随包模板齐全 / 版本号四处一致 / 工作台已接入 / 能建工程 / `scene.json` 校验 0 错 0 警 / 能打单文件 / 单文件零外部依赖 / 单文件含工作台与体检。全过才是可用安装；任何一项失败会以退出码 1 结束并说明原因。
+
+自动化场景加 `--json` 拿结构化结果。换机器、改过引擎、打包分发前，都该跑一次。
 
 ### 其他宿主
 
