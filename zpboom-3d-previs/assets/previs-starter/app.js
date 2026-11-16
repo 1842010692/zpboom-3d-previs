@@ -1,8 +1,8 @@
 import * as THREE from './vendor/three.module.js';
 import {Muxer, ArrayBufferTarget} from './vendor/mp4-muxer.mjs';
-import {initEditor} from './editor.js?v=2.7.5';
-import {initViewTools} from './viewtools.js?v=2.7.5';
-import {initWeather, cleanWeather, WEATHER_FIELDS, WEATHER_PRESETS} from './weather.js?v=2.7.5';
+import {initEditor} from './editor.js?v=2.9.0';
+import {initViewTools} from './viewtools.js?v=2.9.0';
+import {initWeather, cleanWeather, WEATHER_FIELDS, WEATHER_PRESETS} from './weather.js?v=2.9.0';
 
 /* ZPboom.AI 3D 预演 · 统一引擎（scene.json schemaVersion 2）
    场景几何、灯光、人物体型、姿态、道具、结构动画、特效、声音提示全部写在 scene.json。
@@ -272,6 +272,17 @@ export function validateConfig(raw) {
   });
   if (new Set(clean.motions.map((m) => m.id)).size !== clean.motions.length) throw new Error('motions 的 id 不能重复');
   clean.cues = (raw.cues || []).slice(0, 500).map((cue) => ({time: finite(cue.time, '提示时间', 0, duration), label: text(cue.label, '提示文字', 120)}));
+  /* 台词：说话人 + 文本 + 起止时间（秒，全片绝对时间）。气泡锚在说话人身上，文字随时间逐字推进。 */
+  clean.dialogues = (raw.dialogues || []).slice(0, 500).map((line, i) => {
+    const speaker = id(line.speaker, `dialogues[${i}].speaker`);
+    if (!clean.actors.some((actor) => actor.id === speaker)) throw new Error(`dialogues[${i}].speaker 必须是已定义的角色 ID`);
+    const start = finite(line.start, `dialogues[${i}].start`, 0, duration);
+    const end = finite(line.end, `dialogues[${i}].end`, 0, duration);
+    if (end <= start) throw new Error(`dialogues[${i}] 的 end 必须大于 start`);
+    return {speaker, text: text(line.text, `dialogues[${i}].text`, 600), start, end,
+      ...(line.note ? {note: text(line.note, `dialogues[${i}].note`, 200)} : {})};
+  });
+  clean.dialogues.sort((a, b) => a.start - b.start);
   const cleanedWeather = cleanWeather(raw.weather, duration, {finite, timedKeys, easeOf}); if (cleanedWeather) clean.weather = cleanedWeather;
   return clean;
 }
@@ -405,7 +416,7 @@ function labelSprite(actor) {
   ctx.font = 'bold 35px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#f5fbff'; ctx.fillText(actor.id, 128, 44);
   const texture = new THREE.CanvasTexture(label); texture.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map: texture, depthTest: false, transparent: true}));
-  sprite.position.set(0, 2.35, 0); sprite.scale.set(.9, .31, 1); sprite.userData.helper = true; return sprite;
+  sprite.position.set(0, 2.42, 0); sprite.scale.set(.56, .19, 1); sprite.userData.helper = true; return sprite;
 }
 function mechArmParts(parent, s, metalColor) {
   const metal = mat(metalColor, {metalness: .85, roughness: .3}), dark = mat('#2b3036', {metalness: .6, roughness: .4});
@@ -449,7 +460,10 @@ function buildDummy(actor) {
   const head = new THREE.Group(); head.position.y = .03 * s; neck.add(head);
   const R = .12 * s, hc = .15 * s;
   const skull = new THREE.Mesh(new THREE.SphereGeometry(R, 28, 20), skin); skull.position.y = hc; skull.castShadow = true; skull.receiveShadow = true; head.add(skull);
-  const band = new THREE.Mesh(new THREE.CylinderGeometry(R * 1.012, R * 1.012, .05 * s, 28, 1, true, Math.PI - .95, 1.9), accent); band.position.y = hc + .012 * s; head.add(band); // 弧形眼带
+  // 弧形眼带：用独立材质，方便近景按占屏比例淡出（否则一条实心亮带横贯面门，
+  // 看起来就像「脸被一根白条挡住」）。远景保持实心，继续当视线指示用。
+  const bandMat = accent.clone(); bandMat.transparent = true;
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(R * 1.012, R * 1.012, .05 * s, 28, 1, true, Math.PI - .95, 1.9), bandMat); band.position.y = hc + .012 * s; band.name = 'eyeBand'; head.add(band);
   if (k.ponytail) { const tail = capsuleBetween(head, .03 * s, 0, -.13 * s, mat(k.hair, {roughness: .8})); tail.position.set(0, hc - .02 * s, R * .95); tail.rotation.x = -.5; }
   const pts = {};
   const point = (name, parent, pos, obj = new THREE.Object3D()) => { obj.position.set(...pos); parent.add(obj); pts[name] = obj; points.set(`${actor.id}.${name}`, obj); return obj; };
@@ -1063,9 +1077,205 @@ function applyClips(v, actor, t) {
   }
 }
 
+/* ───────── 台词气泡：锚在说话人身边，文字随时间逐字推进 ───────── */
+/* 气泡用 DOM 叠在画布上（中文清晰、可复制），位置每帧由头部世界坐标投影得到。
+   说话人不在画面内或被切到身后时自动隐藏，避免气泡挂在错误位置。 */
+const bubblePool = [];
+const bubbleVec = new THREE.Vector3();
+const bubbleRight = new THREE.Vector3();
+const bubbleSide = new THREE.Vector3();
+function buildBubbles() {
+  const layer = $('bubble-layer');
+  layer.replaceChildren();
+  bubblePool.length = 0;
+  for (const [bubbleIndex, line] of (config.dialogues || []).entries()) {
+    const el = document.createElement('div');
+    el.className = 'bubble';
+    el.dataset.speaker = line.speaker;
+    el.dataset.index = String(bubbleIndex);
+    const who = document.createElement('span'); who.className = 'who';
+    const body = document.createElement('span'); body.className = 'line';
+    const caret = document.createElement('i'); caret.className = 'caret';
+    body.append(caret);
+    el.append(who, body);
+    layer.append(el);
+    bubblePool.push({line, el, who, body, caret, shown: -1, actor: null});
+  }
+}
+function activeDialogueAt(t) { return (config.dialogues || []).filter((line) => t >= line.start && t < line.end); }
+function updateBubbles(t) {
+  const layer = $('bubble-layer');
+  if (!layer) return;
+  const active = new Set(activeDialogueAt(t).map((line) => line));
+  const rect = $('stage').getBoundingClientRect();
+  const cam = viewCam();
+  bubbleRight.setFromMatrixColumn(cam.matrixWorld, 0); // 相机右向（世界坐标）
+  for (const bubble of bubblePool) {
+    const {line, el} = bubble;
+    if (!active.has(line)) { el.hidden = true; continue; }
+    const actor = config.actors.find((item) => item.id === line.speaker);
+    const visual = actors.get(line.speaker);
+    if (!actor || !visual) { el.hidden = true; continue; }
+    // 逐字：按这句台词的时长把文字匀速推出来，最后留一小段读完
+    const chars = [...line.text];
+    const span = Math.max(0.3, line.end - line.start);
+    const progress = Math.min(1, (t - line.start) / (span * 0.88));
+    const count = Math.round(progress * chars.length);
+    if (count !== bubble.shown) {
+      bubble.shown = count;
+      bubble.body.textContent = chars.slice(0, count).join('');
+      bubble.body.append(bubble.caret);
+    }
+    bubble.caret.style.display = progress < 1 ? '' : 'none';
+    bubble.who.textContent = actor.label;
+    el.style.setProperty('--bubble-color', actor.color || '#9fb6d8');
+    // 锚点：说话人头部世界坐标 → 屏幕像素
+    const head = visual.points.head ? visual.points.head.getWorldPosition(bubbleVec) : null;
+    if (!head) { el.hidden = true; continue; }
+    const projected = head.clone().project(cam);
+    if (projected.z > 1 || projected.z < -1) { el.hidden = true; continue; } // 相机背后
+    const x = (projected.x + 1) / 2 * rect.width;
+    const y = (1 - projected.y) / 2 * rect.height;
+    // 说话人在画面外（头被切掉、或已走出画框）时不挂气泡
+    if (x < -rect.width * .5 || x > rect.width * 1.5 || y < -rect.height * .5 || y > rect.height * 1.5) { el.hidden = true; continue; }
+    el.hidden = false;
+    // 头在屏幕上的半径：沿相机右向偏移 0.16m 再投影一次量出来。
+    // 特写时头占半屏，气泡若只按固定偏移放就会直接压到脸上，必须按实际大小让位。
+    bubbleSide.copy(head).addScaledVector(bubbleRight, 0.16).project(cam);
+    const r = Math.max(7, Math.abs((bubbleSide.x - projected.x) / 2 * rect.width));
+    const bubbleW = el.offsetWidth || 120, bubbleH = el.offsetHeight || 50;
+    const gap = 12;
+    // 首选把气泡放在头的侧面（不遮脸）；两侧都放不下时改放头下方 / 上方
+    const fitsRight = x + r + gap + bubbleW <= rect.width - 6;
+    const fitsLeft = x - r - gap - bubbleW >= 6;
+    el.classList.remove('below', 'side-right', 'side-left');
+    let left, top;
+    if (fitsRight || fitsLeft) {
+      const rightSide = fitsRight && (!fitsLeft || x < rect.width * .5);
+      el.classList.add(rightSide ? 'side-right' : 'side-left');
+      // side-right：left 是元素左边；side-left：left 是元素右边；两者 top 都是元素底边
+      left = rightSide ? x + r + gap : x - r - gap;
+      top = y + bubbleH / 2;
+    } else if (y + r + gap + bubbleH <= rect.height - 4) {
+      el.classList.add('below');
+      left = x;               // below：left 是元素中线，top 是元素顶边
+      top = y + r + gap;
+    } else {
+      left = x;               // 默认：left 是元素中线，top 是元素底边
+      top = Math.max(bubbleH + 4, y - r - gap);
+    }
+    // 兜底：始终把气泡整个留在画框内（不同模式的锚点语义不同，分别钳制）
+    if (el.classList.contains('side-right')) {
+      left = Math.max(6, Math.min(left, rect.width - bubbleW - 6));
+      top = Math.max(bubbleH + 4, Math.min(top, rect.height - 4));
+    } else if (el.classList.contains('side-left')) {
+      left = Math.max(bubbleW + 6, Math.min(left, rect.width - 6));
+      top = Math.max(bubbleH + 4, Math.min(top, rect.height - 4));
+    } else if (el.classList.contains('below')) {
+      left = Math.max(bubbleW / 2 + 6, Math.min(left, rect.width - bubbleW / 2 - 6));
+      top = Math.max(4, Math.min(top, rect.height - bubbleH - 4));
+    } else {
+      left = Math.max(bubbleW / 2 + 6, Math.min(left, rect.width - bubbleW / 2 - 6));
+      top = Math.max(bubbleH + 4, Math.min(top, rect.height - 4));
+    }
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+  }
+}
+/* 时间线下方的「当前镜头内容」：随播放头切换镜头，并列出该镜的台词 */
+function updateTimelineContent(shot) {
+  const index = config.shots.indexOf(shot) + 1;
+  $('tc-badge').textContent = `镜头 ${index}`;
+  $('tc-title').textContent = shot.label;
+  $('tc-time').textContent = `${shot.start.toFixed(2)}–${shot.end.toFixed(2)}s`;
+  $('tc-desc').textContent = shot.action || '';
+  const lines = $('tc-lines');
+  const inShot = (config.dialogues || []).filter((line) => line.start < shot.end && line.end > shot.start);
+  const signature = inShot.map((line) => `${line.speaker}@${line.start}`).join('|');
+  if (lines.dataset.signature !== signature) {
+    lines.dataset.signature = signature;
+    lines.replaceChildren(...inShot.map((line) => {
+      const actor = config.actors.find((item) => item.id === line.speaker);
+      const chip = document.createElement('span'); chip.className = 'tc-line';
+      chip.style.setProperty('--tc-color', actor?.color || '#9fb6d8');
+      const who = document.createElement('b'); who.textContent = actor?.label || line.speaker;
+      const what = document.createElement('span'); what.textContent = line.text;
+      chip.append(who, what);
+      chip.dataset.start = line.start; chip.dataset.end = line.end;
+      return chip;
+    }));
+  }
+  for (const chip of lines.children) chip.classList.toggle('on', currentTime >= Number(chip.dataset.start) && currentTime < Number(chip.dataset.end));
+}
+
+/* 惰性查找角色身上的两类「会盖住脸」的元素：名牌 Sprite 与眼带 mesh */
+function overlayState(v) {
+  if (v.nameSprite === undefined) {
+    v.nameSprite = null;
+    v.nameplateOverlap = false;
+    v.root.traverse((child) => { if (!v.nameSprite && child.type === 'Sprite') v.nameSprite = child; });
+  }
+  if (v.eyeBand === undefined) {
+    v.eyeBand = null;
+    v.root.traverse((child) => { if (!v.eyeBand && child.name === 'eyeBand') v.eyeBand = child; });
+  }
+  return v;
+}
+
+/* 近景遮挡处理（每帧跑）：把「贴在脸上的元素」在特写时收起来。
+   1) 角色名牌是 Sprite（depthTest:false，永远压在画面最上层），特写时会糊住整张脸。
+      不用固定距离阈值（换焦段 / 换画幅就失效），改做屏幕空间重叠检测：
+      把「名牌矩形」和「头部圆形」都投影到 NDC，两者一旦压到一起就收起这块名牌；
+      远景保留（帮助观众辨认谁是谁）。
+   2) 白膜人偶的弧形眼带在近景是一条横贯面门的实心亮带，同样会被读成「脸被挡住」，
+      按头部占屏比例把它淡出，远景保持实心继续当视线指示用。 */
+function updateCloseupOverlays() {
+  const cam = viewCam();
+  const helpersOn = $('helpers').checked; // 名牌本来就是编辑器辅助物，跟着「辅助线」开关走
+  const tanHalf = Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2);
+  const aspect = cam.aspect || 1;
+  for (const [, v] of actors) {
+    if (!v.points || !v.points.head) continue;
+    const headPos = v.points.head.getWorldPosition(new THREE.Vector3());
+    const dHead = Math.max(.05, cam.position.distanceTo(headPos));
+    // 头部投影半径（NDC）；换算成「头直径占屏高比例」就是它本身
+    const headR = (0.15 * (v.s || 1)) / (dHead * tanHalf);
+
+    // ── 名牌：屏幕空间重叠检测 ──
+    overlayState(v);
+    if (v.nameSprite) {
+      const spritePos = v.nameSprite.getWorldPosition(new THREE.Vector3());
+      const dSprite = Math.max(.05, cam.position.distanceTo(spritePos));
+      const nh = headPos.clone().project(cam);
+      const ns = spritePos.clone().project(cam);
+      // NDC 半高换算：距离 d 处可见世界高度 = 2·d·tan(fov/2)，NDC 跨度 2
+      const halfH = (v.nameSprite.scale.y * .5) / (dSprite * tanHalf);            // 名牌半高
+      const halfW = (v.nameSprite.scale.x * .5) / (dSprite * tanHalf * aspect);    // 名牌半宽
+      const hitX = Math.abs(ns.x - nh.x) < halfW + headR * 1.1;
+      const hitY = Math.abs(ns.y - nh.y) < halfH + headR * 1.1;
+      // 重叠判定与「辅助线」开关无关：体检要回答「一旦打开辅助线会不会压脸」
+      v.nameplateOverlap = hitX && hitY;
+      v.nameSprite.visible = helpersOn ? !v.nameplateOverlap : false;
+    }
+
+    // ── 眼带：近景淡出 ──
+    // 头部占屏 10% 起淡，28% 时完全隐去。注意是「归零」不是「降到三成」：
+    // 白膜头本身是亮色，半透明白带压上去照样刺眼，看着仍像一根横杠糊住脸。
+    // 真正的特写里就让它彻底消失；中近景保留实心，继续当视线指示用。
+    if (v.eyeBand && v.eyeBand.material) {
+      const t = Math.min(1, Math.max(0, (headR - 0.10) / 0.18));
+      const smooth = t * t * (3 - 2 * t);
+      v.eyeBand.material.opacity = 1 - smooth;
+    }
+  }
+}
+
 function draw() {
   const shot = updateScene();
+  updateCloseupOverlays();
   render();
+  updateBubbles(currentTime);
+  updateTimelineContent(shot);
   $('shot-hud').textContent = shot.label;
   const cues = config.cues.filter((item) => currentTime >= item.time && currentTime < item.time + 1.2).map((item) => item.label);
   $('cue-hud').textContent = cues.join('　|　'); $('cue-hud').hidden = !cues.length;
@@ -1299,7 +1509,7 @@ async function applyConfig(raw) {
   applyAspectLayout();
   buildTimeline();
   $('actor-select').replaceChildren(...config.actors.map((actor) => { const option = document.createElement('option'); option.value = actor.id; option.textContent = actor.label; return option; }));
-  buildActorChips(); buildActorFields(); buildKeyMarks();
+  buildActorChips(); buildActorFields(); buildKeyMarks(); buildBubbles();
   controls.forEach((name) => { $(name).disabled = false; }); if (!restoring) editor?.onConfig(); else editor?.buildLanes(); seek(0); resize();
 }
 function upsert(keys, frame) { tangentCache.delete(keys); const index = keys.findIndex((key) => Math.abs(key.time - frame.time) < .0001); if (index < 0) keys.push(frame); else keys[index] = {...keys[index], ...frame}; keys.sort((a, b) => a.time - b.time); }
@@ -1361,8 +1571,8 @@ $('config-file').addEventListener('change', async () => {
   try { if (recording || exporting) throw new Error('请先结束导出再导入'); if (file.size > 8 * 1024 * 1024) throw new Error('配置文件超过 8MB'); await applyConfig(JSON.parse(await file.text())); status('配置已导入'); }
   catch (error) { status(`导入失败：${error.message}`); } finally { $('config-file').value = ''; }
 });
-$('mocap-open').addEventListener('click', async () => { try { (await import('./videomocap.js?v=2.7.5')).openVideoMocap(mocapCtx); } catch (error) { status(`视频动捕打不开：${error.message}`); } });
-$('mocap-live')?.addEventListener('click', async () => { try { (await import('./videomocap.js?v=2.7.5')).openVideoMocap(mocapCtx, {live: true}); } catch (error) { status(`实时动捕打不开：${error.message}`); } });
+$('mocap-open').addEventListener('click', async () => { try { (await import('./videomocap.js?v=2.9.0')).openVideoMocap(mocapCtx); } catch (error) { status(`视频动捕打不开：${error.message}`); } });
+$('mocap-live')?.addEventListener('click', async () => { try { (await import('./videomocap.js?v=2.9.0')).openVideoMocap(mocapCtx, {live: true}); } catch (error) { status(`实时动捕打不开：${error.message}`); } });
 $('reset').addEventListener('click', async () => { if (initialConfig && !recording && !exporting) { const before = editor?.beginEdit(); await restoreConfig(clone(initialConfig)); editor?.endEdit('恢复项目配置', before); status('已恢复成打开页面时的 scene.json · Ctrl+Z 可撤销'); } });
 
 // 自由观察 / 俯视的鼠标键盘操作在 viewtools.js
@@ -1812,8 +2022,112 @@ async function init() {
     editor = initEditor(editorCtx); view = initViewTools(viewCtx); buildTimeline(); editor.onConfig(); editor.checkDraft(); resize();
     setTimeout(() => refreshDarkness().then((txt) => { if (txt) status(`${txt}：视频模型需要看清画面，可在「镜头」页点「参考提亮 · 自动」，导出时选「提亮参考」`); }).catch(() => {}), 300);
     new ResizeObserver(resize).observe($('stage')); resize(); requestAnimationFrame(animate); status(missingMotions.length ? `缺少动作文件，暂用关键帧：${missingMotions.join('、')}（放进工程后刷新即可）` : '预演已就绪；点画面里的人物 / 道具 / 场景可直接拖动编辑，Ctrl+S 保存到 scene.json');
-    window.__ZPBOOM_PREVIS__ = {
-      ready: true, threeRevision: THREE.REVISION, seek,
+/* ───────── 遮挡体检：相机 → 主体 的视线是否被场景/道具挡住 ───────── */
+function isDescendantOf(object, ancestor) {
+  let node = object;
+  while (node) { if (node === ancestor) return true; node = node.parent; }
+  return false;
+}
+function describeOccluder(object) {
+  const node = object.userData && object.userData.node;
+  if (node) return {kind: '场景', id: node.id || node.type || 'unnamed', type: node.type || '', position: node.position, size: node.size, rotation: node.rotation};
+  const name = object.name || '';
+  if (name.startsWith('prop:')) return {kind: '道具', id: name.slice(5), type: 'prop'};
+  let owner = object;
+  while (owner) {
+    if (owner.userData && owner.userData.actorId) return {kind: '角色', id: owner.userData.actorId, type: 'actor'};
+    owner = owner.parent;
+  }
+  return {kind: '其他', id: name || object.type || 'unnamed', type: object.type || ''};
+}
+/* 只有「场景实体」才算遮挡物：world 子树（阶梯 / 洞壁 / 血月 / 糖浆 / 焦糖碎片）+ 道具。
+   角色、名牌、编辑器控件、特效粒子都不算——它们要么是分镜主体，要么是编辑辅助。 */
+function occlusionSolids() {
+  const solids = [];
+  if (world) solids.push(world);
+  for (const item of props.values()) if (item.group) solids.push(item.group);
+  return solids;
+}
+/* 编辑器辅助物件（相机辅助线、变换控件平面、名牌、粒子）不算遮挡物 */
+function isIgnorableOccluder(object) {
+  if (!object.visible) return true;
+  const data = object.userData;
+  if (data && data.helper) return true;
+  const type = object.type || '';
+  if (type === 'Sprite' || type === 'Points' || type === 'Line' || type === 'LineSegments' || type === 'LineLoop') return true;
+  if (/Helper$/.test(type)) return true;
+  const name = object.name || '';
+  if (/Helper$/.test(name) || name.startsWith('TransformControls')) return true;
+  return false;
+}
+/* 从视口相机向每个角色的头/胸发射线，返回被谁挡住、挡在多远。
+   距离远小于机位到角色的距离 → 说明相机贴着或陷进了模型内部（穿模）。 */
+function occlusionReport() {
+  if (!config || !scene) return [];
+  // 分镜模式用分镜相机（shotCam），与生成器算机位时同源；自由观察 / 俯视才用视口相机
+  const cam = (topView || freeCamera) ? viewCam() : shotCam;
+  const origin = cam.position.clone();
+  const rc = new THREE.Raycaster();
+  rc.camera = cam; // Sprite.raycast 需要 raycaster.camera，否则空指针
+  rc.near = 0.005; rc.far = 200;
+  const out = [];
+  for (const actor of config.actors || []) {
+    const v = actors.get(actor.id);
+    if (!v) continue;
+    const probes = [];
+    if (v.points.head) probes.push({label: '头', p: v.points.head.getWorldPosition(new THREE.Vector3())});
+    probes.push({label: '胸', p: new THREE.Vector3(v.root.position.x, v.root.position.y + 1.05, v.root.position.z)});
+    const row = {actor: actor.id, label: actor.label, points: []};
+    for (const probe of probes) {
+      const dir = probe.p.clone().sub(origin);
+      const dist = dir.length();
+      dir.normalize();
+      rc.set(origin, dir);
+      rc.far = Math.max(0.02, dist - 0.04);
+      const hits = rc.intersectObjects(occlusionSolids(), true).filter((hit) => !isIgnorableOccluder(hit.object)
+        && !isDescendantOf(hit.object, v.root));
+      const solid = hits.filter((hit) => describeOccluder(hit.object).kind !== '角色');
+      row.points.push({
+        label: probe.label, distance: dist, blocked: solid.length > 0,
+        by: solid.slice(0, 4).map((hit) => Object.assign(describeOccluder(hit.object), {
+          distance: hit.distance, point: hit.point.toArray().map((n) => Number(n.toFixed(3))),
+          hitLocal: hit.point.clone().applyMatrix4(new THREE.Matrix4().copy(hit.object.matrixWorld).invert()).toArray().map((n) => Number(n.toFixed(3))),
+        })),
+        actorInFront: hits.length - solid.length,
+      });
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+/* 近景元素体检：每个角色此刻「头占屏多少 / 名牌还压不压脸 / 眼带还横不横贯面门」
+   —— 工作台据此把「分镜被元素挡住」这类问题挑出来，而不是靠肉眼翻片。 */
+function overlayReport() {
+  if (!config || !scene) return [];
+  const cam = (topView || freeCamera) ? viewCam() : shotCam;
+  const tanHalf = Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2);
+  const out = [];
+  for (const [id, v] of actors) {
+    if (!v.points || !v.points.head) continue;
+    overlayState(v);
+    const headPos = v.points.head.getWorldPosition(new THREE.Vector3());
+    const d = Math.max(.05, cam.position.distanceTo(headPos));
+    const headFrac = (0.15 * (v.s || 1)) / (d * tanHalf); // 头直径占屏高比例
+    out.push({
+      actor: id,
+      headFrac: Number(headFrac.toFixed(4)),
+      nameplateVisible: Boolean(v.nameSprite && v.nameSprite.visible),
+      nameplateOverlap: Boolean(v.nameplateOverlap),
+      bandOpacity: v.eyeBand && v.eyeBand.material ? Number(v.eyeBand.material.opacity.toFixed(3)) : null,
+      helpersOn: $('helpers').checked,
+    });
+  }
+  return out;
+}
+
+  window.__ZPBOOM_PREVIS__ = {
+      ready: true, threeRevision: THREE.REVISION, seek, occlusion: occlusionReport, overlays: overlayReport,
       renderAt: (seconds) => { seek(seconds); return window.__ZPBOOM_PREVIS__.getState(); },
       getConfig: () => clone(config), validateConfig, loadConfig: async (raw2) => { await applyConfig(raw2); return true; },
       point: (value) => { const p = resolvePoint(value); return p ? p.getWorldPosition(new THREE.Vector3()).toArray().map((n) => Number(n.toFixed(3))) : null; },
@@ -1825,7 +2139,7 @@ async function init() {
         props: [...props.values()].map(({prop, group, holder}) => ({id: prop.id, owner: prop.owner, holder, visible: group.visible, world: group.getWorldPosition(new THREE.Vector3()).toArray().map((n) => Number(n.toFixed(3)))})),
         rigs: config.rigs.map((rig) => ({id: rig.id, value: sampleValue(rig.keyframes, currentTime, 'value')})),
         fx: fxItems.map((item) => ({type: item.cfg.type, active: Boolean(item.state?.())}))}),
-      exportMp4, exportBlender, openExportDialog, measureShots, autoLift, setClean, mocapModule: () => import('./videomocap.js?v=2.7.5'), get mocapCtx() { return mocapCtx; },
+      exportMp4, exportBlender, openExportDialog, measureShots, autoLift, setClean, mocapModule: () => import('./videomocap.js?v=2.9.0'), get mocapCtx() { return mocapCtx; },
       frameInMode: (mode, t) => { const was = $('helpers').checked; $('helpers').checked = false; setHelperVisibility(); editor?.suspend(); enterMode(mode); currentTime = t; draw(); const url = canvas.toDataURL('image/jpeg', .8); exitMode(); $('helpers').checked = was; setHelperVisibility(); editor?.resume(); draw(); return url; }, get editor() { return editor; }, weatherAt: (t) => weather?.sample(t ?? currentTime) || null, get view() { return view; },
       screenOf: (p) => { const v = new THREE.Vector3(...p).project(viewCam()), r = canvas.getBoundingClientRect(); return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height]; }, setHelpers: (visible) => { $('helpers').checked = Boolean(visible); setHelperVisibility(); draw(); }
     };

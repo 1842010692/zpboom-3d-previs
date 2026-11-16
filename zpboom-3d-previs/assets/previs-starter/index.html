@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ZPboom.AI · 3D 预演</title>
-  <link rel="stylesheet" href="./styles.css?v=2.7.5">
+  <link rel="stylesheet" href="./styles.css?v=2.9.0">
+  <link rel="stylesheet" href="./workbench.css?v=2.9.0">
   <script type="importmap">{"imports": {"three": "./vendor/three.module.js"}}</script>
 </head>
 <body>
@@ -46,6 +47,7 @@
       <button id="save" class="ghost" title="保存到工程的 scene.json（Ctrl+S）"><svg><use href="#i-save"/></svg><span>保存</span></button>
       <button id="import" class="ghost" title="导入 scene.json"><svg><use href="#i-upload"/></svg><span>导入</span></button><input id="config-file" type="file" accept=".json,application/json" hidden>
       <button id="export" class="ghost" title="导出当前配置为 scene.json"><svg><use href="#i-download"/></svg><span>导出配置</span></button>
+      <button id="wb-toggle" class="ghost" title="调试工作台：实时读数 / 镜头表 / 台词表 / 体检（D 键开关）"><span>调试台</span></button>
       <button id="clean" class="ghost" title="干净画面（Esc 返回）"><svg><use href="#i-clean"/></svg><span>干净画面</span></button>
       <button id="blender" class="ghost" disabled title="导出带完整动画的 GLB（人物关节、道具、镜头相机、灯光逐帧烘焙），再用工程里的 blender_setup.py 生成 .blend"><svg><use href="#i-cube"/></svg><span>导出 Blender</span></button>
       <button id="record" class="primary" disabled title="逐帧渲染 H.264（按画幅：16:9 为 1920×1080，21:9 为 2520×1080，9:16 为 1080×1920），不掉帧"><svg><use href="#i-film"/></svg><span id="record-label">导出 MP4</span></button>
@@ -60,6 +62,7 @@
           <div class="overlay top-left"><span id="shot-hud" class="pill"></span></div>
           <div class="overlay top-right"><span id="frame-hud" class="pill mono"></span></div>
           <div id="cue-hud" hidden></div>
+          <div id="bubble-layer"></div>
           <div id="error" role="alert" hidden></div>
           <div id="clean-hint">按 Esc 返回编辑器</div>
           <div id="frame-guide" hidden><span id="frame-guide-label"></span></div>
@@ -106,6 +109,15 @@
           <div class="tl-track thin" id="tl-cues"></div>
           <div class="tl-track thin" id="tl-keys"></div>
           <div class="tl-playhead" id="tl-playhead"><span></span></div>
+        </div>
+        <div class="tl-current" id="tl-current">
+          <div class="tc-head">
+            <span class="tc-badge" id="tc-badge">镜头</span>
+            <b id="tc-title">—</b>
+            <span class="tc-time mono" id="tc-time"></span>
+          </div>
+          <p class="tc-desc" id="tc-desc"></p>
+          <div class="tc-lines" id="tc-lines"></div>
         </div>
       </div>
     </section>
@@ -269,6 +281,66 @@
   </dialog>
 
   <footer class="statusbar"><span class="status-left"><i class="dot"></i><span id="status" role="status">正在初始化…</span></span><span class="status-right">Y 向上 · 米 · 人物角度弧度 / 场景角度度 · Three.js r160</span></footer>
-  <script type="module" src="./app.js?v=2.7.5"></script>
+  <aside id="workbench" class="workbench" hidden>
+    <div class="wb-head">
+      <b>调试工作台</b>
+      <span class="wb-ver" id="wb-ver"></span>
+      <button id="wb-close" class="icon" type="button" title="关闭（D）">✕</button>
+    </div>
+    <div class="wb-tabs">
+      <button type="button" data-wb-tab="live" class="on">实时</button>
+      <button type="button" data-wb-tab="shots">镜头</button>
+      <button type="button" data-wb-tab="lines">台词</button>
+      <button type="button" data-wb-tab="check">体检</button>
+    </div>
+    <div class="wb-body">
+      <div class="wb-pane" data-wb-pane="live"><div id="wb-live"></div></div>
+      <div class="wb-pane" data-wb-pane="shots" hidden><div id="wb-shots"></div></div>
+      <div class="wb-pane" data-wb-pane="lines" hidden><div id="wb-lines"></div></div>
+      <div class="wb-pane" data-wb-pane="check" hidden>
+        <div class="wb-sec">
+          <h4>Schema 校验</h4>
+          <div id="wb-schema"></div>
+          <div class="wb-actions"><button type="button" id="wb-schema-run">重新校验</button></div>
+        </div>
+        <div class="wb-sec">
+          <h4>全片气泡体检</h4>
+          <div class="wb-actions">
+            <select id="wb-step" title="扫描步长"><option value="0.1">0.1 s</option><option value="0.25" selected>0.25 s</option><option value="0.5">0.5 s</option><option value="1">1 s</option></select>
+            <button type="button" id="wb-scan">开始扫描</button>
+          </div>
+          <div class="wb-progress"><i id="wb-scan-bar"></i></div>
+          <p class="wb-hint" id="wb-scan-tip"></p>
+          <div id="wb-scan-out"></div>
+        </div>
+        <div class="wb-sec">
+          <h4>遮挡 / 穿模体检</h4>
+          <div class="wb-actions"><button type="button" id="wb-occ">逐镜检查视线</button></div>
+          <div class="wb-progress"><i id="wb-occ-bar"></i></div>
+          <p class="wb-hint" id="wb-occ-tip"></p>
+          <div id="wb-occ-out"></div>
+        </div>
+        <div class="wb-sec">
+          <h4>近景元素体检</h4>
+          <div class="wb-actions"><button type="button" id="wb-closeup">逐镜检查压脸元素</button></div>
+          <div class="wb-progress"><i id="wb-closeup-bar"></i></div>
+          <p class="wb-hint" id="wb-closeup-tip"></p>
+          <div id="wb-closeup-out"></div>
+        </div>
+        <div class="wb-sec">
+          <h4>场景与报告</h4>
+          <div class="wb-actions">
+            <label class="wb-btn-file">载入 scene.json<input id="wb-file" type="file" accept=".json,application/json" hidden></label>
+            <button type="button" id="wb-export-json" disabled>导出 JSON</button>
+            <button type="button" id="wb-export-md" disabled>导出 Markdown</button>
+          </div>
+          <p class="wb-hint" id="wb-msg"></p>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <script src="./workbench.js?v=2.9.0" defer></script>
+  <script type="module" src="./app.js?v=2.9.0"></script>
 </body>
 </html>

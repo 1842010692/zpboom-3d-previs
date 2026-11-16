@@ -15,7 +15,7 @@
   "schemaVersion": 2, "title": "片名", "fps": 30, "duration": 15, "aspectRatio": "16:9",
   "world": {"up": "Y", "unit": "meter", "background": "#0b0e12", "exposure": 1.2, "fog": [18, 45],
             "floor": {"size": [30, 22], "color": "#2d2f32", "roughness": 0.95}, "grid": true},
-  "lights": [], "set": [], "kinds": {}, "poses": {}, "actors": [], "props": [], "rigs": [], "fx": [], "cues": [], "shots": [],
+  "lights": [], "set": [], "kinds": {}, "poses": {}, "actors": [], "props": [], "rigs": [], "fx": [], "cues": [], "dialogues": [], "shots": [],
   "extensions": []
 }
 ```
@@ -149,6 +149,33 @@ rig 必须从 0 秒覆盖到片尾，数值由 set 节点的 `rig` 绑定解释�
 - `shots`：`{"id", "label", "start", "end", "action", "camera": {"fov", "keyframes": [{"time"(镜头内), "position", "target"}]}}`。镜头需从 0 开始连续覆盖全片，硬切不跨镜补间。
 - 焦段换算成 16:9 的竖直 FOV：28mm≈46°，32mm≈41°，35mm≈38°，40mm≈33°，50mm≈27°，65mm≈21°，75mm≈18°，85mm≈16°。
 
+## dialogues：台词与对话气泡
+
+`dialogues` 让台词成为一等公民：网页里说话人旁边自动弹出对话框、文字逐字推进；时间线下方同步列出该镜的台词，正在说的那一条高亮。
+
+```json
+"dialogues": [
+  {"speaker": "YINSU", "text": "降下来吧……薛塘！算我求你……", "start": 5.18, "end": 12.32},
+  {"speaker": "XUETANG", "text": "降下来？你凭什么叫我降下来？！", "start": 28.18, "end": 31.33}
+]
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `speaker` | 说话人，必须是 `actors` 里已定义的 ID（校验器会拦下不存在的角色） |
+| `text` | 台词正文，1～600 字 |
+| `start` / `end` | **全片绝对秒**（不是镜头内局部秒）；`end` 必须大于 `start`，且不超过 `duration` |
+| `note` | 可选备注，不参与显示 |
+
+要点：
+
+- 气泡锚在说话人**头部**（`actor.head` 挂点）上，随走位和镜头实时跟随；说话人出画（头被切掉或走出画框）时该句自动不挂气泡。
+- 逐字推进按这句台词**自己的时长**匀速铺开（走完约占用 88% 的时长），末尾是闪烁光标，读完自动停。
+- 气泡按**头在屏幕上的实际大小**让位：特写时头占半屏，气泡自动挪到旁边而不压脸；两侧放不下就改放头的下方或上方，始终完整留在画框内。
+- 多句台词可以时间上重叠（两个角色同时说话），各自挂在自己身上。
+- `dialogues` 只影响显示，不影响动作、时序、相机和其他配置；`cues`（底部音效提示）与它互不干扰。
+- 气泡层是**网页预览用的 DOM 叠层**，不烧进导出的 MP4——导出渲染的是 WebGL 画布。生成 AI 参考视频时本来就要求画面干净（"no on-screen text"），保持现状即可。
+
 ## 扩展（极少需要）
 
 内置能力确实不够时（车辆、布料、群众等），在工程里写 `extra.js`，并在 scene.json 里写 `"extensions": ["extra.js"]`：
@@ -178,6 +205,9 @@ export function setup(api) {
 - `view`：镜头与自由观察接口，`state()` 返回视图模式（shot / free / top）、是否显示路径和小窗；`setFree(bool)`、`setTop(bool)`、`focusSelection()`、`nudge(op)`、`splitShot()`、`deleteShot()`。`getState().camera` 永远是分镜相机，`getState().view` 是当前视口。
 - `editor`：当场编辑接口，`state()` 返回选中对象 / 选中关键帧 / 是否有未记关键帧的改动 / 是否未保存 / 撤销步数 / 自动关键帧开关；`select('actor'|'prop', id)`、`selectKey(kind, id, index)`、`commitTransform(force)`、`insertKey()`、`deleteKey()`、`copyKey()`、`pasteKey()`、`undo()`、`redo()`、`save()`。
 - `exportMp4({download: false})`、`exportBlender({download: false})`（见 [导出 Blender 工程](blender-export.md)）、`setClean(bool)`、`setHelpers(bool)`。
+- `occlusion()`：遮挡 / 穿模体检。逐镜返回相机到各观察点（每个角色的头与胸）的射线结果，`points[].blocked` 表示视线是否被挡住，`points[].by[]` 给出遮挡物明细（`kind` / `id` / `distance` / 世界坐标 / 局部坐标）。只有 `world` 子树与道具算遮挡物——角色、名牌、`CameraHelper`、`TransformControls`、粒子都不算。
+- `overlays()`：近景元素体检。逐角色返回 `headFrac`（头直径占屏高比例）、`nameplateOverlap`（名牌矩形与头部圆形是否在屏幕空间重叠，与「辅助线」开关无关）、`nameplateVisible`、`bandOpacity`（弧形眼带不透明度）、`helpersOn`。
+- `loadConfig(cfg)` 之外，工作台面板用 `validateConfig` 做 Schema 校验，用 `getConfig` 取配置。
 
 验证接触时先读数值（手与目标距离、道具持有者），再只对关键切点截图确认构图，能省下大量截图。
 

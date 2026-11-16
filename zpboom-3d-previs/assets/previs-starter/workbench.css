@@ -1,0 +1,63 @@
+/* ZPboom.AI · 调试工作台（浮层，不改主布局；干净画面下自动隐藏） */
+.workbench {
+  position: fixed; top: 60px; right: 12px; bottom: 36px; width: 392px; z-index: 70;
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px;
+  box-shadow: 0 20px 64px rgba(0, 0, 0, .62);
+}
+.workbench[hidden] { display: none; }
+.wb-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 10px 14px; border-bottom: 1px solid var(--line); background: var(--raised); }
+.wb-head b { font-size: 13px; font-weight: 650; }
+.wb-head .wb-ver { margin-left: auto; color: var(--faint); font-size: 10px; font-family: var(--mono); }
+.wb-head .icon { width: 26px; height: 26px; }
+.wb-tabs { display: flex; gap: 2px; padding: 8px 10px 0; border-bottom: 1px solid var(--line); }
+.wb-tabs button { height: 28px; padding: 0 11px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); font-size: 12px; }
+.wb-tabs button:hover { background: transparent; color: var(--text); }
+.wb-tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
+.wb-body { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px 18px; }
+.wb-pane[hidden] { display: none; }
+
+/* 小节 */
+.wb-sec { margin-bottom: 18px; }
+.wb-sec > h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 11px; font-weight: 650; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); }
+.wb-sec > h4::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+/* 读数表 */
+.wb-kv { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 3px 10px; font-size: 12px; }
+.wb-kv dt { color: var(--muted); }
+.wb-kv dd { margin: 0; font-family: var(--mono); font-size: 11.5px; word-break: break-all; }
+.wb-kv dd.ok { color: var(--ok); }
+.wb-kv dd.bad { color: #ff7a6b; }
+.wb-kv dd.warn { color: var(--cue); }
+
+/* 通用表 */
+.wb-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.wb-table th { position: sticky; top: 0; z-index: 1; padding: 5px 6px; text-align: left; font-weight: 600; color: var(--muted); background: var(--panel); border-bottom: 1px solid var(--line-strong); }
+.wb-table td { padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.wb-table tbody tr { cursor: pointer; }
+.wb-table tbody tr:hover { background: var(--raised); }
+.wb-table tbody tr.on { background: var(--accent-soft); }
+.wb-table td.mono { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+.wb-table td.tight { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 体检结果 */
+.wb-issue { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; border-radius: 7px; background: var(--raised); border-left: 3px solid var(--faint); margin-bottom: 5px; font-size: 11.5px; }
+.wb-issue.bad { border-left-color: #ff6b5c; }
+.wb-issue.warn { border-left-color: var(--cue); }
+.wb-issue .t { font-family: var(--mono); color: var(--muted); white-space: nowrap; }
+.wb-issue .m { flex: 1; min-width: 0; }
+.wb-pass { padding: 14px; border-radius: 9px; text-align: center; color: var(--ok); background: rgba(69, 208, 124, .08); border: 1px solid rgba(69, 208, 124, .25); font-size: 12px; }
+
+/* 进度条 */
+.wb-progress { height: 5px; border-radius: 3px; background: var(--sunken); overflow: hidden; margin: 8px 0; }
+.wb-progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .12s linear; }
+.wb-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.wb-actions button { height: 28px; font-size: 12px; }
+.wb-actions select, .wb-actions input[type="file"] { height: 28px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); font-size: 12px; }
+.wb-hint { margin: 6px 0 0; color: var(--faint); font-size: 11px; line-height: 1.5; }
+.wb-counts { display: flex; gap: 10px; margin: 8px 0 0; font-size: 11px; color: var(--muted); }
+.wb-counts b { font-family: var(--mono); color: var(--text); }
+
+.clean .workbench, .clean #wb-toggle { display: none; }
+.wb-actions label.wb-btn-file { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); cursor: pointer; font-size: 12px; }
+.wb-actions label.wb-btn-file:hover { background: #1f2227; border-color: var(--line-strong); }

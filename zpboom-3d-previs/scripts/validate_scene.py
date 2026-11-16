@@ -276,6 +276,29 @@ def validate_scene(scene):
             warnings.append(f'镜头 {sid} 缺少 action 说明，生成交接时需补写')
     if abs(previous - duration) > 1e-6:
         errors.append('最后一镜须结束于 duration')
+    dialogues = scene.get('dialogues', [])
+    if not isinstance(dialogues, list) or len(dialogues) > 500:
+        errors.append('dialogues 须为不超过 500 条的数组')
+    else:
+        actor_ids = {a.get('id') for a in scene.get('actors', []) if isinstance(a, dict)}
+        for index, line in enumerate(dialogues):
+            if not isinstance(line, dict):
+                errors.append(f'dialogues[{index}] 必须是对象')
+                continue
+            speaker = line.get('speaker')
+            if not isinstance(speaker, str) or not ID.fullmatch(speaker):
+                errors.append(f'dialogues[{index}].speaker 非法')
+            elif speaker not in actor_ids:
+                errors.append(f'dialogues[{index}].speaker {speaker} 不是已定义的角色')
+            body = line.get('text')
+            if not isinstance(body, str) or not 1 <= len(body) <= 600:
+                errors.append(f'dialogues[{index}].text 须为 1–600 字符')
+            start, end = line.get('start'), line.get('end')
+            if not number(start) or not number(end) or end <= start:
+                errors.append(f'dialogues[{index}] start/end 无效')
+                continue
+            if start < 0 or end > duration + 1e-6:
+                errors.append(f'dialogues[{index}] 时间超出全片时长 {duration}s')
     lift = (scene.get('world') or {}).get('lift')
     if lift is not None and (not number(lift) or not 0 <= lift <= 1):
         errors.append('world.lift（参考提亮）必须在 0–1 之间')
