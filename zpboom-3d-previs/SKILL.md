@@ -4,6 +4,9 @@ description: 根据分镜脚本、人物和场景参考制作可编辑的 HTML/T
 license: MIT
 metadata:
   author: ZPboom.AI
+  maintainer: 1842010692
+  upstream: https://github.com/zpboom324-star/zpboom-3d-previs
+  upstreamVersion: "2.7.5"
   version: "2.9.0"
   language: zh-CN
 ---

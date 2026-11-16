@@ -1,5 +1,7 @@
 # 更新记录
 
+> **上游基线 v2.7.5**：本仓库自 [zpboom324-star/zpboom-3d-previs](https://github.com/zpboom324-star/zpboom-3d-previs)（作者 ZPboom.AI，MIT）的 **v2.7.5** 分叉。**2.7.5 及之前的条目由原作者维护**，本仓库只负责 **2.8.0 之后**的改动；上游提交历史与 `v2.7.4` / `v2.7.5` 标签原样保留。详见 [UPSTREAM.md](UPSTREAM.md)。
+
 
 ## 2.9.0（2026-11-15）· 跨平台调试工作台 + 遮挡体检 + 近景压脸处理
 

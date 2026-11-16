@@ -1,5 +1,7 @@
 # ZPboom.AI · 3D 预演导演（zpboom-3d-previs）
 
+> **本仓库是增强版，不是原项目。** 上游为 [zpboom324-star/zpboom-3d-previs](https://github.com/zpboom324-star/zpboom-3d-previs)（作者 ZPboom.AI，MIT，基线 **v2.7.5**）。本仓库在该基线上继续开发，新增 **v2.8.0**（台词气泡 + 时间线内容条）与 **v2.9.0**（跨平台调试工作台、遮挡穿模体检、近景名牌与眼带处理、单文件打包器）。上游提交历史、标签与版权声明原样保留，改动边界见 [UPSTREAM.md](UPSTREAM.md)。
+
 把分镜脚本变成一个**能在浏览器里打开、能直接改的 3D 网页预演**：先用白膜人偶把机位、走位、动作先后和镜头衔接对好，再导出参考视频、整理生成提示词，交给 AI 视频模型去生成。
 
 它是一个符合 [Agent Skills 规范](https://agentskills.io/specification) 的技能包，配合 Claude Code 等能读写本地文件、能开浏览器的 AI 助手使用：你用中文描述分镜，助手搭场景、写配置、自己打开网页逐镜检查；你也可以在网页里直接拖人物、调机位。
@@ -552,7 +554,9 @@ MediaPipe 在 Safari 里会崩溃，请用 Chrome 或 Edge。其他功能 Safari
 
 ## 许可与致谢
 
-- 本技能以 **MIT 许可** 发布，见 [LICENSE.txt](LICENSE.txt)。基于 Azhen.AI 1.0.0 版（MIT）修改与扩展，由 ZPboom.AI 整理。
+- 本技能以 **MIT 许可** 发布，见 [LICENSE.txt](LICENSE.txt)。上游版权声明与许可全文**原样保留**，未做删改。
+- 版权与维护链路：Azhen.AI 1.0.0（MIT，原始版本）→ **ZPboom.AI**（整理并扩展到 v2.7.5，[上游仓库](https://github.com/zpboom324-star/zpboom-3d-previs)）→ **本仓库**（v2.8.0 / v2.9.0 增强，维护者 `1842010692`）。
+- 哪些是上游的、哪些是本仓库新增的、怎么跟进上游更新，见 [UPSTREAM.md](UPSTREAM.md)。
 - 随包第三方运行库，原许可文件保留在 `assets/previs-starter/vendor/`：
   - [Three.js](https://github.com/mrdoob/three.js) r160（含 FBX 读取器、GLTF 导出器、TransformControls）—— MIT
   - [mp4-muxer](https://github.com/Vanilagy/mp4-muxer) 5.1.3 —— MIT
